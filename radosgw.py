@@ -1,4 +1,4 @@
-# collectd-ceph-plugin - ceph.py
+# collectd-radosgw-plugin - radosgw.py
 #
 # Author: Marcos Amorim <marcosmamorim@gmail.com>
 # Description: This is a collectd plugin which runs under the Python plugin to
@@ -24,7 +24,6 @@ import collectd
 import requests
 from awsauth import S3Auth
 import json
-import os
 
 # See conf to configure
 ACCESS_KEY = 'access_key'
@@ -43,13 +42,10 @@ METRIC_TYPES = {
    'size_kb_actual': ('size_kb_actual', 'derive')
 }
 
-
-
-
 def log_verbose(msg):
 	if not VERBOSE_LOGGING:
 		return
-	collectd.info('ceph plugin [verbose]: %s' % msg)
+	collectd.info('radosgw plugin [verbose]: %s' % msg)
 
 def configure_callback(conf):
 	"""Receive configuration block"""
@@ -64,7 +60,7 @@ def configure_callback(conf):
 		elif node.key == 'Verbose':
 			VERBOSE_LOGGING = bool(node.values[0])
 		else:
-			collectd.warning('ceph plugin: Unknown config key: %s.'
+			collectd.warning('radosgw plugin: Unknown config key: %s.'
 							% node.key)
 	log_verbose('Configured with ACCESS_KEY=%s, SECRET_KEY=%s, SERVER=%s' % (ACCESS_KEY, SECRET_KEY, SERVER))
 
@@ -72,7 +68,7 @@ def configure_callback(conf):
 def getBucketByUser(user):
 	busage = {}
 
-	url = 'http://%s/admin/bucket?format=json&stats=true&uid=%s' % (SERVER, user)
+	url = 'https://%s/admin/bucket?format=json&stats=true&uid=%s' % (SERVER, user)
 	r = requests.get(url, auth=S3Auth(ACCESS_KEY, SECRET_KEY, SERVER))
 	bucketUsage = r.json()
 	key_root1 = user
@@ -96,20 +92,20 @@ def getBucketByUser(user):
 					val_type = 'derive'
 
 				key_name = METRIC_DELIM.join([user, bucket, 'summary', k1.replace('rgw.', ''),  k2])
-				val = collectd.Values(plugin='ceph')
+				val = collectd.Values(plugin='radosgw')
 				val.type = val_type
 				val.type_instance = key_name
 				val.values = [v2]
 				val.dispatch()
 
 def getUsers():
-	url = 'http://%s/admin/metadata/user?format=json' % SERVER
+	url = 'https://%s/admin/metadata/user?format=json' % SERVER
 	r = requests.get(url, auth=S3Auth(ACCESS_KEY, SECRET_KEY, SERVER))
 	return r.json()
 
 def getUsageEntries(user):
 	ustats = {}
-	url = 'http://%s/admin/usage?format=json&uid=%s&show-summary=false"' % (SERVER, user)
+	url = 'https://%s/admin/usage?format=json&uid=%s&show-summary=true' % (SERVER, user)
 	r = requests.get(url, auth=S3Auth(ACCESS_KEY, SECRET_KEY, SERVER))
 	usages = r.json()
 
@@ -123,14 +119,7 @@ def getUsageEntries(user):
 
 	# If no entries return function without data
 	if (len(usages['entries']) == 0):
-		return  ustats
-	
-	#TODO
-	# Clean old logs from API, didn't work with remove-all parameter
-	# Workarround after read usage
-	# radosgw-admin usage trim --uid=UID
-	cmd = "/usr/bin/radosgw-admin usage trim --uid=%s" % user
-	os.system(cmd)
+		return ustats
 
 	# Get stats by bucket or list_buckets
 	for usage in usages['entries'][0]['buckets']:
@@ -166,24 +155,24 @@ def read_callback():
 		getBucketByUser(user)
 
 	if not info:
-		collectd.error('ceph plugin: No info received')
+		collectd.error('radosgw plugin: No info received')
 		return
 
 	# Parsing users
 	for key,value in info.items():
 		log_verbose('Dispatching: %s' %  key)
-		key_prefix = ''
+		key_prefix = 'radosgw'
 		key_root = key
 		key_name = METRIC_DELIM.join([key_root, 'summary'])
 
 		for sk1,sv1 in value['summary'].items():
 			try:
-	    			key_root1, val_type = METRIC_TYPES[sk1]
+	    		key_root1, val_type = METRIC_TYPES[sk1]
 			except KeyError:
 				val_type = 'derive'
 
 			key_name = METRIC_DELIM.join([key_root, 'summary', sk1])
-			val = collectd.Values(plugin='ceph')
+			val = collectd.Values(plugin='radosgw')
 			val.type = val_type
 			val.type_instance = key_name
 			val.values = [sv1]
@@ -197,14 +186,14 @@ def read_callback():
 			#Parsing buckets stats per user
 			for k2,v2 in v1.items():
 				key_name = METRIC_DELIM.join([key_root, k1, k2, 'bytes_received'])
-				val = collectd.Values(plugin='ceph')
+				val = collectd.Values(plugin='radosgw')
 				val.type = 'derive'
 				val.type_instance = key_name
 				val.values = [ v2['bytes_received'] ]
 				val.dispatch()
 
 				key_name = METRIC_DELIM.join([key_root, k1, k2, 'bytes_sent'])
-				val = collectd.Values(plugin='ceph')
+				val = collectd.Values(plugin='radosgw')
 				val.type = 'derive'
 				val.type_instance = key_name
 				val.values = [ v2['bytes_sent'] ]
